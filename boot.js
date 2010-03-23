@@ -46,7 +46,7 @@ simpleRoute.prototype.getProxyRequest = function (request) {
 };
 
 rproxy.registerRouter("simpleRoute",simpleRoute);
-// delete simpleRoute;
+delete simpleRoute;
 
 rproxy.ProxyPass("simpleRoute",
 	{
@@ -58,11 +58,11 @@ rproxy.ProxyPass("simpleRoute",
 http.createServer(function (request, response) {
 	request.setBodyEncoding("utf8");
 
-	var buffer = new rproxy.bufferedRequest();
-	request.addListener("data",function (chunk) {		buffer.event("data",chunk); });
-	request.addListener("end",function () {				buffer.event("end"); });
+// 	var buffer = new rproxy.bufferedRequest();
+// 	request.addListener("data",function (chunk) {		buffer.event("data",chunk); });
+// 	request.addListener("end",function () {				buffer.event("end"); });
 
-	if ( rproxy.ProxyHandle(request,response, buffer) ) {
+	if ( rproxy.ProxyHandle(request,response) ) {
 		return true;
 	}
 

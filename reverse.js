@@ -51,7 +51,7 @@ var getEncoding = function ( resp ) {
 	return encoding;
 };
 
-var haveFun = function (handler, request, response,buffer) {
+var haveFun = function ( handler, request, response ) {
 
 	sys.print("client request: "+request.method+" "+request.url);
 	if ( request.headers.host ) sys.puts(" host = "+request.headers.host);
@@ -65,9 +65,9 @@ var haveFun = function (handler, request, response,buffer) {
 	var backendRequest = backend.request(query.method, query.url, query.headers);
 
 	// stream client request body => backend request
-	buffer.addListener("data", function(chunk) { backendRequest.write(chunk, "utf8"); });
+	request.addListener("data", function(chunk) { sys.puts("received DATA : "+chunk); backendRequest.write(chunk, "utf8"); });
 
-	buffer.addListener("end",function() {
+	request.addListener("end",function() {
 		backendRequest.addListener('response', function (backendResponse) {
 
 			sys.puts("backend response: "+backendResponse.statusCode );
@@ -83,7 +83,6 @@ var haveFun = function (handler, request, response,buffer) {
 			backendResponse.addListener("end",function() {			response.close(); });
 		});
 		backendRequest.close();
-		delete buffer;
 	});
 	return true;
 };
@@ -108,10 +107,10 @@ exports.ProxyPass = function (router, options) {
 exports.ProxyMatch = function ( request ) {return getRouteHandler(request) === false ? false : true ;}
 exports.ProxyRouteHandler = function ( request ) {	return getRouteHandler(request); }
 
-exports.ProxyHandle = function (request, response,buffer) {
+exports.ProxyHandle = function (request, response) {
 	var handler = getRouteHandler(request);
 	if ( handler === false ) return false;
-	haveFun(handler,request,response,buffer);
+	haveFun(handler,request,response);
 	return true;
 }
 
