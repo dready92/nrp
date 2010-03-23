@@ -55,6 +55,15 @@ rproxy.ProxyPass("simpleRoute",
 	}
 );
 
+setInterval(function() {
+	var d = process.memoryUsage();
+	d.rss = parseInt(d.rss/1024);
+	d.vsize = parseInt(d.vsize/1024);
+	d.heapTotal = parseInt(d.heaptotal/1024);
+	d.heapUsed = parseInt(d.heapUsed/1024);
+	sys.puts("rss: " +d.rss+", vsize: "+d.vsize+", heapTotal: "+d.heapTotal+" , heapUsed: "+d.heapUsed);
+},5000);
+
 http.createServer(function (request, response) {
 	request.setBodyEncoding("utf8");
 

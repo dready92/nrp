@@ -60,36 +60,59 @@ var haveFun = function ( handler, request, response ) {
 	// from the client request, the router gives backend request
 	// query should have : hostname, port, method, url, headers
 	var query = handler.getProxyRequest(request);
+	if ( !query.hostname || !query.port || !query.method || !query.url || !query.headers ) {
+		return false;
+	}
 
+	// create the connection to the backend server
 	var backend = http.createClient(query.port, query.hostname);
+
+	// send request to the backend
 	var backendRequest = backend.request(query.method, query.url, query.headers);
 
 	// stream client request body => backend request
-	request.addListener("data", function(chunk) { sys.puts("received DATA : "+chunk); backendRequest.write(chunk, "utf8"); });
+	request.addListener("data", function(chunk) { backendRequest.write(chunk, "utf8"); });
 
+	// the request is sent
 	request.addListener("end",function() {
+
+		// listening for the backend's response
 		backendRequest.addListener('response', function (backendResponse) {
 
 			sys.puts("backend response: "+backendResponse.statusCode );
 			sys.puts(sys.inspect(backendResponse.headers));
 
-			var encoding = handler.getEncoding ? handler.getEncoding(backendResponse) : getEncoding(backendResponse);
+			// determine encoding from backend response headers
+			
 
+			// clientResponse represents the reponse to send to the client
+			// should have : statusCode, headers
+			// can have : data (response body), encoding (response encoding)
 			var clientResponse = handler.getProxyResponse ? handler.getProxyResponse(request,backendResponse) : backendResponse ;
 
-			response.writeHead(backendResponse.statusCode, backendResponse.headers);
-			backendResponse.setBodyEncoding(encoding);
-			backendResponse.addListener("data", function (chunk) {	response.write(chunk,encoding); });
-			backendResponse.addListener("end",function() {			response.close(); });
+
+			clientResponse.encoding = clientResponse.encoding ? clientResponse.encoding : getEncoding(backendResponse);
+// 			var encoding = handler.getEncoding ? handler.getEncoding(backendResponse) : getEncoding(backendResponse);
+
+			// send response headers to the client
+			response.writeHead(clientResponse.statusCode, clientResponse.headers);
+			// set clients response body encoding
+			backendResponse.setBodyEncoding(clientResponse.encoding);
+
+			if ( clientResponse.data ) {
+				response.write(chunk,clientResponse.encoding);
+			} else {
+				backendResponse.addListener("data", function (chunk) {	response.write(chunk,clientResponse.encoding); });
+				backendResponse.addListener("end",function() {			response.close(); });
+			}
 		});
 		backendRequest.close();
+		
 	});
 	return true;
 };
 
-exports.registerRouter = function (name, def) {
-	Routers[name] = def;
-};
+exports.registerRouter = function (name, def) {	Routers[name] = def; };
 
 exports.ProxyPass = function (router, options) {
 	if ( typeof Routers[router] != "undefined" ) {
@@ -113,88 +136,3 @@ exports.ProxyHandle = function (request, response) {
 	haveFun(handler,request,response);
 	return true;
 }
-
-
-
-/**
-* an helper class to buffer client connection request events "data" and "end"
-*
-* Any class just have to bind on this object instead of the request object.
-*
-* This object buffers the request body : it can be huge.
-* To address this, if the instance is created with singleListener set to true, 
-* the class will buffer the request body as long as there isn't "data" listeners
-* when a new "data" listener is registered, it's run with the buffered data, and then the buffered data is deleted,
-* any subsequent request data is directly streamed to the listener
-*
-* Usage : in node.js createServer callback ;
-*
-*	http.createServer(function (request, response) {
-		request.setBodyEncoding("utf8");
-		var buffer = new rproxy.bufferedRequest();
-		request.addListener("data", function(chunk) { buffer.event("data",chunk); } );
-		request.addListener("end",  function(chunk) { buffer.event("end");        } );
-
-		(..)
-
-
-		buffer.addListener("data",function(chunk) {
-			// request body part
-			sys.puts("received request body chunk : "+chunk);
-		});
-
-		buffer.addListener("end",function(chunk) {
-			// request body ended
-			sys.puts("I got the full request");
-
-			// don't have any use of the buffer anymore
-			delete buffer;
-		});
-	});
-
-
-*/
-exports.bufferedRequest = function (singleListener) {
-	var listeners = {"data": [], "end": []},
-	buffer = '',
-	ended = false;
-	if ( singleListener )	singleListener = true;
-	else					singleListener = false;
-	this.event = function(evt, chunk) {
-		if ( evt == "data" ) {
-			if ( !singleListener || !listeners.data.length ) {
-				buffer+=chunk;
-			}
-			for ( var index in listeners.data ) {
-				listeners.data[index](chunk);
-			}
-		}
-		if ( evt == "end" ) {
-			ended = true;
-			for ( var index in listeners.end ) {
-				listeners.end[index]();
-			}
-		}
-	};
-
-	this.addListener = function (evt, callback) {
-		if ( evt == "data" ) {
-			listeners.data.push(callback);
-			if ( buffer.length ) {
-				callback(buffer);
-				if ( singleListener ) {
-					delete buffer;
-				}
-			}
-		}
-		if ( evt == "ended" ) {
-			if ( ended === true ) {
-				callback();
-			}
-		} else {
-			listeners.end.push(callback);
-		}
-		
-	};
-};
-
