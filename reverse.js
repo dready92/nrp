@@ -44,7 +44,10 @@ var duplicateRequest = function (request) {
 var getEncoding = function ( resp ) {
 	var encoding = "utf8";
 	if ( resp.headers["content-type"] && resp.headers["content-type"].length ) {
-		if ( resp.headers["content-type"].search(/^text/) < 0 || resp.headers["content-type"].search("javascript") < 0 ) {
+		if ( 		resp.headers["content-type"].search(/^text/) < 0
+				|| 	resp.headers["content-type"].search("javascript") < 0
+				|| 	resp.headers["content-type"].search("json") < 0
+				) {
 			encoding="binary";
 		}
 	}
@@ -53,60 +56,68 @@ var getEncoding = function ( resp ) {
 
 var haveFun = function ( handler, request, response ) {
 
+	var connection = {
+		"request": request,
+		"response": response,
+		"read": 0,
+		"written": 0
+	};
 	sys.print("client request: "+request.method+" "+request.url);
 	if ( request.headers.host ) sys.puts(" host = "+request.headers.host);
 	else						sys.puts("");
 
 	// from the client request, the router gives backend request
 	// query should have : hostname, port, method, url, headers
-	var query = handler.getProxyRequest(request);
-	if ( !query.hostname || !query.port || !query.method || !query.url || !query.headers ) {
+	connection.query = handler.getProxyRequest(connection);
+	if ( !connection.query.hostname || !connection.query.port || !connection.query.method || !connection.query.url || !connection.query.headers ) {
 		return false;
 	}
 
 	// create the connection to the backend server
-	var backend = http.createClient(query.port, query.hostname);
+	var backend = http.createClient(connection.query.port, connection.query.hostname);
 
 	// send request to the backend
-	var backendRequest = backend.request(query.method, query.url, query.headers);
+	connection.backendRequest = backend.request(connection.query.method, connection.query.url, connection.query.headers);
 
 	// stream client request body => backend request
-	request.addListener("data", function(chunk) { backendRequest.write(chunk, "utf8"); });
+	request.addListener("data", function(chunk) { connection.read += chunk.length ; connection.backendRequest.write(chunk, "utf8"); });
 
 	// the request is sent
 	request.addListener("end",function() {
 
 		// listening for the backend's response
-		backendRequest.addListener('response', function (backendResponse) {
+		connection.backendRequest.addListener('response', function (backendResponse) {
 
 			sys.puts("backend response: "+backendResponse.statusCode );
 			sys.puts(sys.inspect(backendResponse.headers));
-
+			connection.backendResponse = backendResponse;
 			// determine encoding from backend response headers
 			
 
 			// clientResponse represents the reponse to send to the client
 			// should have : statusCode, headers
 			// can have : data (response body), encoding (response encoding)
-			var clientResponse = handler.getProxyResponse ? handler.getProxyResponse(request,backendResponse) : backendResponse ;
+			connection.clientResponse = handler.getProxyResponse ? handler.getProxyResponse(connection) : backendResponse ;
 
 
-			clientResponse.encoding = clientResponse.encoding ? clientResponse.encoding : getEncoding(backendResponse);
+			connection.clientResponse.encoding = connection.clientResponse.encoding ? connection.clientResponse.encoding : getEncoding(backendResponse);
 // 			var encoding = handler.getEncoding ? handler.getEncoding(backendResponse) : getEncoding(backendResponse);
 
 			// send response headers to the client
-			response.writeHead(clientResponse.statusCode, clientResponse.headers);
+			response.writeHead(connection.clientResponse.statusCode, connection.clientResponse.headers);
 			// set clients response body encoding
-			backendResponse.setBodyEncoding(clientResponse.encoding);
+			backendResponse.setBodyEncoding(connection.clientResponse.encoding);
 
-			if ( clientResponse.data ) {
-				response.write(chunk,clientResponse.encoding);
+			if ( connection.clientResponse.data ) {
+				response.write(connection.clientResponse.data,connection.clientResponse.encoding);
+				connection.written = connection.clientResponse.data.length;
+				response.close();
 			} else {
-				backendResponse.addListener("data", function (chunk) {	response.write(chunk,clientResponse.encoding); });
-				backendResponse.addListener("end",function() {			response.close(); });
+				backendResponse.addListener("data", function (chunk) {	connection.written += chunk.length ; response.write(chunk,connection.clientResponse.encoding); });
+				backendResponse.addListener("end",function() {			response.close(); sys.puts("backend finished: "+connection.read+" "+connection.written);});
 			}
 		});
-		backendRequest.close();
+		connection.backendRequest.close();
 		
 	});
 	return true;

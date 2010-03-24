@@ -18,29 +18,25 @@ var simpleRoute = function(options) {
 	this.options.port 		 = d.port || 80;
 	this.options.target_pathname  = d.pathname ;
 	this.options.regexp = new RegExp("^"+this.options.source);
-// 	sys.puts(JSON.stringify(this.options));
 };
 
 simpleRoute.prototype.options = {"source": null, "target": null};
 
 simpleRoute.prototype.match = function ( request ) {
-// 	sys.puts("matching "+request.url+" on reg "+this.options.source);
-// 	var r = new RegExp("^"+this.options.source);
 	var matches = request.url.match( this.options.regexp );
 	return matches && matches.length ? true : false;
 };
-simpleRoute.prototype.getProxyRequest = function (request) {
+simpleRoute.prototype.getProxyRequest = function (connection) {
 	var back =  {
-		"headers": JSON.parse(JSON.stringify(request.headers)),
-		"method": request.method,
-		"url": request.url,
-		"httpVersion": request.httpVersion,
+		"headers": JSON.parse(JSON.stringify(connection.request.headers)),
+		"method": connection.request.method,
+		"url": connection.request.url,
+		"httpVersion": connection.request.httpVersion,
 	};
 	back.hostname     = this.options.hostname;
 	back.port         = this.options.port
 	back.headers.host = this.options.hostname;
-	back.data 		  = request.data;
-// 	var r = new RegExp("^"+this.options.source);
+	back.data 		  = connection.request.data;
 	back.url = back.url.replace(this.options.regexp,this.options.target_pathname);
 	return back;
 };
@@ -55,14 +51,14 @@ rproxy.ProxyPass("simpleRoute",
 	}
 );
 
-setInterval(function() {
-	var d = process.memoryUsage();
-	d.rss = parseInt(d.rss/1024);
-	d.vsize = parseInt(d.vsize/1024);
-	d.heapTotal = parseInt(d.heaptotal/1024);
-	d.heapUsed = parseInt(d.heapUsed/1024);
-	sys.puts("rss: " +d.rss+", vsize: "+d.vsize+", heapTotal: "+d.heapTotal+" , heapUsed: "+d.heapUsed);
-},5000);
+// setInterval(function() {
+// 	var d = process.memoryUsage();
+// 	d.rss = parseInt(d.rss/1024);
+// 	d.vsize = parseInt(d.vsize/1024);
+// 	d.heapTotal = parseInt(d.heaptotal/1024);
+// 	d.heapUsed = parseInt(d.heapUsed/1024);
+// 	sys.puts("rss: " +d.rss+", vsize: "+d.vsize+", heapTotal: "+d.heapTotal+" , heapUsed: "+d.heapUsed);
+// },5000);
 
 http.createServer(function (request, response) {
 	request.setBodyEncoding("utf8");
