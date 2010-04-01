@@ -14,7 +14,7 @@ var simpleRoute = function(options) {
 		throw { "error": "ArgumentException", "reason": "target protocol: only http is supported" };
 	}
 	this.options = options;
-	this.options.hostname 	 = d.host;
+	this.options.hostname 	 = d.hostname;
 	this.options.port 		 = d.port || 80;
 	this.options.target_pathname  = d.pathname ;
 	this.options.regexp = new RegExp("^"+this.options.source);
@@ -31,7 +31,7 @@ simpleRoute.prototype.getProxyRequest = function (connection) {
 		"headers": JSON.parse(JSON.stringify(connection.request.headers)),
 		"method": connection.request.method,
 		"url": connection.request.url,
-		"httpVersion": connection.request.httpVersion,
+		"httpVersion": connection.request.httpVersion
 	};
 	back.hostname     = this.options.hostname;
 	back.port         = this.options.port
@@ -41,43 +41,52 @@ simpleRoute.prototype.getProxyRequest = function (connection) {
 	return back;
 };
 
+simpleRoute.prototype.onProxyRequest = function (connection) {
+// 	var back =  {
+// 		"headers": JSON.parse(JSON.stringify(connection.request.headers)),
+// 		"method": connection.request.method,
+// 		"url": connection.request.url,
+// 		"httpVersion": connection.request.httpVersion
+// 	};
+
+	
+	connection.request.backendHost     = this.options.hostname;
+	connection.request.backendPort         = this.options.port
+	connection.request.backendHeaders.host = this.options.hostname;
+// 	back.data 		  = connection.request.clientdata;
+	connection.request.backendUrl = connection.request.client.url.replace(this.options.regexp,this.options.target_pathname);
+};
+
+simpleRoute.prototype.onProxyResponse = function(connection) {
+	for (var index in connection.answer.clientHeaders) {
+		if ( index.toLowerCase() == 'location' ) {
+			sys.puts ("FOUND LOCATION HEADER : " + connection.answer.clientHeaders.location);
+			var r = new RegExp("^"+this.options.target);
+			connection.answer.clientHeaders.location = connection.answer.clientHeaders.location.replace(r,"http://"+connection.request.client.headers.host+this.options.source);
+		}
+	}
+};
+
 rproxy.registerRouter("simpleRoute",simpleRoute);
 delete simpleRoute;
 
 rproxy.ProxyPass("simpleRoute",
 	{
 		"source": "/",
-		"target": "http://localhost/"
+		"target": "http://source.tho.centiv.net/"
 	}
 );
 
-// setInterval(function() {
-// 	var d = process.memoryUsage();
-// 	d.rss = parseInt(d.rss/1024);
-// 	d.vsize = parseInt(d.vsize/1024);
-// 	d.heapTotal = parseInt(d.heaptotal/1024);
-// 	d.heapUsed = parseInt(d.heapUsed/1024);
-// 	sys.puts("rss: " +d.rss+", vsize: "+d.vsize+", heapTotal: "+d.heapTotal+" , heapUsed: "+d.heapUsed);
-// },5000);
-
 http.createServer(function (request, response) {
 	request.setBodyEncoding("utf8");
-
-// 	var buffer = new rproxy.bufferedRequest();
-// 	request.addListener("data",function (chunk) {		buffer.event("data",chunk); });
-// 	request.addListener("end",function () {				buffer.event("end"); });
 
 	if ( rproxy.ProxyHandle(request,response) ) {
 		return true;
 	}
 
-
 	response.writeHead(404, {"Content-Type": "text/plain"});
 	response.write("The URL you're trying to reach, "+request.url+", was not found on this server.\n");
 	response.close();
 
-
-
-	
 }).listen(8000);
 sys.puts("Server running at http://127.0.0.1:8000/");

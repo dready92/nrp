@@ -14,6 +14,7 @@ Reverse proxy steps :
 6/ stream response body
 7/ close client & backend connections
 
+
 */
 
 var sys  = require("sys"),
@@ -23,7 +24,7 @@ var objs = [] ;
 
 var Routers = {}
 
-
+var requestCount = 0;
 
 var getRouteHandler = function (request) {
 	for ( var index in objs ) {
@@ -57,68 +58,136 @@ var getEncoding = function ( resp ) {
 var haveFun = function ( handler, request, response ) {
 
 	var connection = {
-		"request": request,
-		"response": response,
-		"read": 0,
-		"written": 0
-	};
-	sys.print("client request: "+request.method+" "+request.url);
+		"id": requestCount,
+		"request": {
+			"client": request,
+			"backend": null,
+			"backendHeaders": JSON.parse(JSON.stringify(request.headers)),
+			"backendHost": null,
+			"backendPort": null,
+			"backendUrl" : null,
+			"backendMethod": request.method,
+			"time": 0,
+			"bytes": 0,
+			"encoding": "utf8"
+		},
+		"answer": {
+			"answer": null,
+			"client": response,
+			"backend": null,
+			"clientHeaders": [],
+			"statusCode": null,
+			"time": 0,
+			"bytes": 0,
+			"body": null,
+			"encoding": null
+		}
+	}
+
+	requestCount++;
+	sys.print(connection.id+": client request: "+request.method+" "+request.url);
 	if ( request.headers.host ) sys.puts(" host = "+request.headers.host);
 	else						sys.puts("");
 
-	// from the client request, the router gives backend request
-	// query should have : hostname, port, method, url, headers
-	connection.query = handler.getProxyRequest(connection);
-	if ( !connection.query.hostname || !connection.query.port || !connection.query.method || !connection.query.url || !connection.query.headers ) {
+
+// 	sys.puts("here "+sys.inspect(handler));
+	//
+	// here we call the handler
+	// passing it the big connection data structure
+	// As js pass objects by reference, changes made to connection will be available in this present function
+	//
+	handler.onProxyRequest(connection);
+
+// sys.puts("here");
+
+	if ( !connection.request.backendHost || !connection.request.backendPort || !connection.request.backendMethod || !connection.request.backendUrl ) {
 		return false;
 	}
 
 	// create the connection to the backend server
-	var backend = http.createClient(connection.query.port, connection.query.hostname);
+	var backend = http.createClient(connection.request.backendPort, connection.request.backendHost);
 
 	// send request to the backend
-	connection.backendRequest = backend.request(connection.query.method, connection.query.url, connection.query.headers);
+	connection.request.backend = backend.request(connection.request.backendMethod, connection.request.backendUrl, connection.request.backendHeaders);
+
+	request.connection.addListener("close",function(is_error) {
+		if ( is_error ) {
+			sys.puts(connection.id+": client connection closed due to an error");
+		}
+	});
+	request.connection.addListener("timeout",function() {
+		sys.puts(connection.id+": client connection closed due to a timeout");
+	});
+
+	connection.request.backend.connection.addListener("close",function(is_error) {
+		if ( is_error ) {
+			sys.puts(connection.id+": backend connection closed due to an error");
+		}
+	});
+	connection.request.backend.connection.addListener("timeout",function() {
+		sys.puts(connection.id+": backend connection closed due to a timeout");
+	});
+
+
+
 
 	// stream client request body => backend request
-	request.addListener("data", function(chunk) { connection.read += chunk.length ; connection.backendRequest.write(chunk, "utf8"); });
+	request.addListener("data", function(chunk) { 
+		connection.request.bytes += chunk.length ;
+		connection.request.backend.write(chunk, connection.request.encoding);
+		sys.puts(connection.id+": => "+chunk.length);
+	});
 
 	// the request is sent
 	request.addListener("end",function() {
 
 		// listening for the backend's response
-		connection.backendRequest.addListener('response', function (backendResponse) {
+		connection.request.backend.addListener('response', function (backendResponse) {
 
-			sys.puts("backend response: "+backendResponse.statusCode );
-			sys.puts(sys.inspect(backendResponse.headers));
-			connection.backendResponse = backendResponse;
-			// determine encoding from backend response headers
-			
+			sys.puts(connection.id+": backend response: "+backendResponse.statusCode );
 
-			// clientResponse represents the reponse to send to the client
-			// should have : statusCode, headers
-			// can have : data (response body), encoding (response encoding)
-			connection.clientResponse = handler.getProxyResponse ? handler.getProxyResponse(connection) : backendResponse ;
+			connection.answer.backend = backendResponse;
+			// here we set defaults mapping of backend response to client response
+			connection.answer.clientHeaders = JSON.parse(JSON.stringify(backendResponse.headers));
+			connection.answer.statusCode = backendResponse.statusCode;
 
 
-			connection.clientResponse.encoding = connection.clientResponse.encoding ? connection.clientResponse.encoding : getEncoding(backendResponse);
-// 			var encoding = handler.getEncoding ? handler.getEncoding(backendResponse) : getEncoding(backendResponse);
+			//
+			// here we call once again the handler
+			// only if it has the onProxyResponse function
+			// 
+			if ( handler.onProxyResponse ) {
+				handler.onProxyResponse(connection);
+			}
+
+			// we set encoding with a very basic algorithm in case the handler didn't set it
+			if ( !connection.answer.encoding ) {
+				connection.answer.encoding = getEncoding(backendResponse);
+			}
 
 			// send response headers to the client
-			response.writeHead(connection.clientResponse.statusCode, connection.clientResponse.headers);
+			response.writeHead(connection.answer.statusCode, connection.answer.clientHeaders);
 			// set clients response body encoding
-			backendResponse.setBodyEncoding(connection.clientResponse.encoding);
+			backendResponse.setBodyEncoding(connection.answer.encoding);
 
-			if ( connection.clientResponse.data ) {
-				response.write(connection.clientResponse.data,connection.clientResponse.encoding);
-				connection.written = connection.clientResponse.data.length;
+			if ( connection.answer.data ) {
+				response.write(connection.answer.data,connection.answer.encoding);
+				connection.answer.bytes = connection.answer.data.length;
 				response.close();
 			} else {
-				backendResponse.addListener("data", function (chunk) {	connection.written += chunk.length ; response.write(chunk,connection.clientResponse.encoding); });
-				backendResponse.addListener("end",function() {			response.close(); sys.puts("backend finished: "+connection.read+" "+connection.written);});
+				backendResponse.addListener("data", function (chunk) {
+					response.write(chunk,connection.answer.encoding);
+					connection.answer.bytes += chunk.length ;
+					sys.puts(connection.id+": <= "+chunk.length);
+				});
+				backendResponse.addListener("end",function() {
+				  response.close(); 
+				  sys.puts(connection.id+": backend finished: "+connection.request.bytes+" "+connection.answer.bytes);
+// 				sys.puts("Proxy request ended, read = "+connection.read+", written = "+connection.written);
+				});
 			}
 		});
-		connection.backendRequest.close();
-		
+		connection.request.backend.close();
 	});
 	return true;
 };
@@ -146,4 +215,8 @@ exports.ProxyHandle = function (request, response) {
 	if ( handler === false ) return false;
 	haveFun(handler,request,response);
 	return true;
+}
+
+exports.ManualHandle = function (request, response, handler) {
+	haveFun(handler,request,response);
 }
